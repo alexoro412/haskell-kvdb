@@ -12,7 +12,8 @@ import Control.Concurrent.STM
 import Prelude hiding (init, words, putStrLn)
 import Data.ByteString hiding (pack, hPutStrLn, hGetLine, putStrLn)
 import Data.ByteString.Char8 (words, pack, hPutStrLn, hGetLine, putStrLn)
--- import Text.Show.ByteString (show)
+import qualified Data.ByteString.Char8 as B8
+import Data.Char (toLower)
 import qualified KVDB.Storage as S
 
 type Msg = (Int, String)
@@ -21,36 +22,27 @@ main :: IO ()
 main = do
   sock <- socket AF_INET Stream 0
   setSocketOption sock ReuseAddr 1
-  bind sock (SockAddrInet 4242 iNADDR_ANY)
-  listen sock 2
+  bind sock (SockAddrInet 4040 iNADDR_ANY)
+  listen sock 50
 
   -- create db TVar
   database <- atomically $ S.empty
-  putStrLn "Listening on port 4242"
-  mainLoop sock database
-  -- this channel is never used, so a loop is added
-  -- that throws away all data
-  -- prevents memory leak
-  -- chan <- newChan
-  -- _ <- forkIO $ fix $ \loop -> do
-  --   (_, _) <- readChan chan
-  --   loop
+  putStrLn "Listening on port 4040"
+  mainLoop sock database 0
   return ()
   -- mainLoop sock db 0
 
-mainLoop :: Socket -> S.DB -> IO ()
-mainLoop sock db = do
+mainLoop :: Socket -> S.DB -> Int -> IO ()
+mainLoop sock db num = do
   conn <- accept sock
-  forkIO $ runConn conn db
-  mainLoop sock db
-  -- msgNum is a unique id for each client
-  -- conn <- accept sock
-  -- forkIO $ runConn conn chan msgNum
-  -- mainLoop sock chan $! msgNum + 1
-  -- $ vs $!
+  putStrLn $ pack $ "starting thread " ++ (show num)
+  forkIO $ runConn conn db num
+  mainLoop sock db (num + 1)
 
-runConn :: (Socket, SockAddr) -> S.DB -> IO ()
-runConn (sock, _) database = do
+
+runConn :: (Socket, SockAddr) -> S.DB -> Int -> IO ()
+runConn (sock, _) database num = do
+  -- putStrLn "Client connected"
   -- let broadcast msg = writeChan chan (msgNum, msg)
 
   -- sets up a handle
@@ -59,52 +51,35 @@ runConn (sock, _) database = do
   hSetBuffering hdl NoBuffering
 
   handle (\(SomeException _) -> return ()) $ fix $ \loop -> do
-    line <- fmap (words . init) $ hGetLine hdl -- init removes the newline
-    case line of
-      "quit":_ -> hPutStrLn hdl "Bye!"
-      -- >> makes loop happen after broadcast
-      ["get",k] -> do
-        resp <- atomically $ S.get database k
-        case resp of
-          S.Error e -> hPutStrLn hdl $ pack ("ERR " ++ show e)
-          S.Ok v -> hPutStrLn hdl v
-        loop
-      ["set",k,v] -> do
-        resp <- atomically $ S.set database k v
-        case resp of
-          S.Error e -> hPutStrLn hdl $ pack ("ERR " ++ show e)
-          S.Ok v -> hPutStrLn hdl v
-        loop
-      _ -> hPutStrLn hdl ("git rekt") >> loop
-
+    cmd:args <- fmap words $ hGetLine hdl -- init removes the newline
+    -- putStrLn "got data"
+    -- putStrLn $ pack $ show (cmd:args)
+    resp <- runCmd database cmd args
+    hPutStrLn hdl resp
+    -- putStrLn "also here"
+    loop
     -- killThread reader
-    hClose hdl
-  -- hPutStrLn hdl "Name: "
-  -- init is used to cut off the newline
-  -- name <- fmap init $ hGetLine hdl
-  -- broadcast ("--> " ++ name ++ " entered chat.")
-  -- hPutStrLn hdl ("Welcome, " ++ name ++ "!")
+  hClose hdl
+  putStrLn $ pack $ "finish thread " ++ (show num)
 
-  -- creates duplicate channel
-  -- channels are linked
-  -- data written to one is available to all
+errorToByteString :: S.ErrorCode -> ByteString
+errorToByteString e = pack ("Error: " ++ show e)
 
-  -- reads data off of channel
-  -- and sends to client
-  -- fix basically makes an infinite loop
-  -- reader <- forkIO $ fix $ \loop -> do
-  --   (nextNum, line) <- readChan commLine
-  --   -- don't broadcast back to user
-  --   when (msgNum /= nextNum) $ hPutStrLn hdl line
-  --   loop
-
-  -- Waits for an exception :D
-  --
-  -- handle (\(SomeException _) -> return ()) $ fix $ \loop -> do
-  --   line <- fmap init $ hGetLine hdl -- init removes the newline
-  --   case line of
-  --     "quit" -> hPutStrLn hdl "Bye!"
-  --     -- >> makes loop happen after broadcast
-  --     _ -> broadcast (name ++ ": " ++ line) >> loop
-
-  -- once thread closed, close the reader and the handle
+runCmd :: S.DB -> ByteString -> [ByteString] -> IO ByteString
+runCmd database cmd args = do
+  result <- case (B8.map toLower cmd):args of
+    "async":new_cmd:rest -> do
+      forkIO $ runCmd database new_cmd rest >> return ()
+      return $ S.Ok ""
+    ["get",k] -> atomically $ S.get database k
+    ["set",k,v] -> atomically $ S.set database k v
+    "exists":ks -> atomically $ S.exists database ks
+    "del":ks -> atomically $ S.del database ks
+    "hset":hkvs -> atomically $ S.hset database hkvs
+    "hget":hkey:[k] -> atomically $ S.hget database hkey k
+    "hdel":hkey:ks -> atomically $ S.hdel database hkey ks
+    "clear":[] -> atomically $ S.clear database
+    _ -> return $ S.Error S.Syntax
+  case result of
+    S.Error e -> return $ errorToByteString e
+    S.Ok v -> return v
