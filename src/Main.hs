@@ -28,20 +28,19 @@ main = do
   -- create db TVar
   database <- atomically $ S.empty
   putStrLn "Listening on port 4040"
-  mainLoop sock database 0
+  mainLoop sock database 
   return ()
   -- mainLoop sock db 0
 
-mainLoop :: Socket -> S.DB -> Int -> IO ()
-mainLoop sock db num = do
+mainLoop :: Socket -> S.DB -> IO ()
+mainLoop sock db = do
   conn <- accept sock
-  putStrLn $ pack $ "starting thread " ++ (show num)
-  forkIO $ runConn conn db num
-  mainLoop sock db (num + 1)
+  forkIO $ runConn conn db
+  mainLoop sock db 
 
 
-runConn :: (Socket, SockAddr) -> S.DB -> Int -> IO ()
-runConn (sock, _) database num = do
+runConn :: (Socket, SockAddr) -> S.DB -> IO ()
+runConn (sock, _) database = do
   -- putStrLn "Client connected"
   -- let broadcast msg = writeChan chan (msgNum, msg)
 
@@ -60,7 +59,6 @@ runConn (sock, _) database num = do
     loop
     -- killThread reader
   hClose hdl
-  putStrLn $ pack $ "finish thread " ++ (show num)
 
 errorToByteString :: S.ErrorCode -> ByteString
 errorToByteString e = pack ("Error: " ++ show e)

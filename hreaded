@@ -1,0 +1,2 @@
+/Users/alexoro/static/haskell/first principles/haskell-kvdb/.stack-work/install/x86_64-osx/lts-9.10/8.0.2/bin/kvdb +RTS -N -s -xt -hy -k1k -threaded 
+<<ghc: 3636415208 bytes, 5018 GCs, 3195020/9190040 avg/max bytes residency (493 samples), 20M in use, 0.001 INIT (0.003 elapsed), 6.633 MUT (419.843 elapsed), 0.970 GC (1.313 elapsed) :ghc>>
